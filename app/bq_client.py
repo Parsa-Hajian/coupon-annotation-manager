@@ -1,11 +1,15 @@
-"""BigQuery client for reading coupons/brands + SQLite for storing annotations.
+"""BigQuery client for reading coupons/brands + persistent DB for annotations.
 
 Performance strategy:
 - ONE cached BQ query fetches all coupon+brand data (refreshed every 5 min).
 - All filtering (time, search) happens in-memory on the cached DataFrame.
 - Notification count derived from cached data — no extra BQ call.
 - Coupon detail uses cached data — no extra BQ call.
-- sync_status_log uses batch SQLite operations — no row-by-row loop.
+- sync_status_log uses batch operations — no row-by-row loop.
+
+Storage:
+- Local dev: SQLite file (annotations.db)
+- Cloud (Streamlit Cloud): Turso (libsql) — SQLite-compatible cloud DB
 """
 
 import sqlite3
@@ -20,23 +24,47 @@ from config import KEY_PATH, COUPONS_TABLE, BRAND_TABLE, DB_PATH
 
 
 # ---------------------------------------------------------------------------
-# BigQuery client
+# BigQuery client — local key file or Streamlit secrets
 # ---------------------------------------------------------------------------
 
 @st.cache_resource
 def get_bq_client() -> bigquery.Client:
-    return bigquery.Client.from_service_account_json(KEY_PATH)
+    if KEY_PATH:
+        return bigquery.Client.from_service_account_json(KEY_PATH)
+    # Streamlit Cloud: read credentials from st.secrets
+    from google.oauth2 import service_account
+    credentials = service_account.Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"]
+    )
+    return bigquery.Client(credentials=credentials)
 
 
 # ---------------------------------------------------------------------------
-# SQLite helpers
+# Database helpers — SQLite (local) or Turso (cloud)
 # ---------------------------------------------------------------------------
 
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")  # faster concurrent reads
-    return conn
+def _use_turso() -> bool:
+    """Check if Turso cloud DB is configured."""
+    try:
+        return bool(st.secrets.get("turso", {}).get("url"))
+    except Exception:
+        return False
+
+
+def get_db():
+    if _use_turso():
+        import libsql_experimental as libsql
+        url = st.secrets["turso"]["url"]
+        token = st.secrets["turso"]["token"]
+        conn = libsql.connect(url, auth_token=token)
+        # libsql supports row_factory with sqlite3.Row
+        conn.row_factory = sqlite3.Row
+        return conn
+    else:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
 
 
 def ensure_tables_exist():
