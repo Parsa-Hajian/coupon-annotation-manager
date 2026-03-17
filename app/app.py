@@ -15,6 +15,15 @@ st.markdown("""
     [data-testid="stSidebarNav"] { display: none; }
     header { visibility: hidden; }
     #MainMenu { visibility: hidden; }
+    /* Keep sidebar always visible */
+    [data-testid="stSidebar"] {
+        min-width: 250px !important;
+        max-width: 300px !important;
+    }
+    [data-testid="stSidebar"] > div:first-child {
+        width: 250px !important;
+    }
+    [data-testid="collapsedControl"] { display: none; }
 </style>
 """, unsafe_allow_html=True)
 
