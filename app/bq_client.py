@@ -53,13 +53,10 @@ def _use_turso() -> bool:
 
 def get_db():
     if _use_turso():
-        import libsql_experimental as libsql
+        from turso_http import TursoConnection
         url = st.secrets["turso"]["url"]
         token = st.secrets["turso"]["token"]
-        conn = libsql.connect(url, auth_token=token)
-        # libsql supports row_factory with sqlite3.Row
-        conn.row_factory = sqlite3.Row
-        return conn
+        return TursoConnection(url, token)
     else:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
