@@ -1,0 +1,38 @@
+# Secrets
+mykey.json
+*.json
+!package.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# SQLite database
+*.db
+*.db-wal
+*.db-shm
+
+# Excel output
+coupon_annotations.xlsx
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
