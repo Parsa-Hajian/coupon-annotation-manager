@@ -40,28 +40,14 @@ def get_bq_client() -> bigquery.Client:
 
 
 # ---------------------------------------------------------------------------
-# Database helpers — SQLite (local) or Turso (cloud)
+# Database helpers — SQLite (works on both local and Streamlit Cloud)
 # ---------------------------------------------------------------------------
 
-def _use_turso() -> bool:
-    """Check if Turso cloud DB is configured."""
-    try:
-        return bool(st.secrets.get("turso", {}).get("url"))
-    except Exception:
-        return False
-
-
-def get_db():
-    if _use_turso():
-        from turso_http import TursoConnection
-        url = st.secrets["turso"]["url"]
-        token = st.secrets["turso"]["token"]
-        return TursoConnection(url, token)
-    else:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        return conn
+def get_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
 
 
 def ensure_tables_exist():
