@@ -140,12 +140,17 @@ def _get_processed_ids() -> set:
 # READ: filtered coupons (in-memory filtering on cached data)
 # ---------------------------------------------------------------------------
 
-def get_coupons(time_filter: str = "All", search: str = "") -> pd.DataFrame:
+def get_coupons(time_filter: str = "All", search: str = "",
+                custom_start: str = None, custom_end: str = None) -> pd.DataFrame:
     """Filter cached coupon data by time period and search string."""
     df = _fetch_all_coupons_brands().copy()
 
     # Time filter — in-memory (use UTC-aware timestamps to match BQ data)
-    if time_filter == "Today":
+    if time_filter == "Custom" and custom_start and custom_end:
+        start = pd.Timestamp(custom_start, tz="UTC")
+        end = pd.Timestamp(custom_end, tz="UTC") + pd.Timedelta(days=1)
+        df = df[(df["created_time"] >= start) & (df["created_time"] < end)]
+    elif time_filter == "Today":
         cutoff = pd.Timestamp.now(tz="UTC").normalize()
         df = df[df["created_time"] >= cutoff]
     elif time_filter == "Past Week":
@@ -485,6 +490,32 @@ def get_export_data(start_date: str, end_date: str) -> pd.DataFrame:
                 })
 
     return pd.DataFrame(result_rows)
+
+
+def get_activity_log(start_date: str = None, end_date: str = None) -> pd.DataFrame:
+    """Get annotation activity log (processed coupons) with optional date filter."""
+    conn = get_db()
+    query = "SELECT coupon_id, processed_by, processed_at FROM processed_coupons"
+    params = []
+    if start_date and end_date:
+        query += " WHERE processed_at >= ? AND processed_at <= ?"
+        params = [start_date, end_date + "T23:59:59"]
+    query += " ORDER BY processed_at DESC"
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    if not rows:
+        return pd.DataFrame()
+
+    result = pd.DataFrame([dict(r) for r in rows])
+
+    # Enrich with coupon names from cached BQ data
+    all_df = _fetch_all_coupons_brands()
+    name_map = dict(zip(all_df["coupon_id"], all_df["coupon_name"]))
+    brand_map = dict(zip(all_df["coupon_id"], all_df["brand_name"]))
+    result["coupon_name"] = result["coupon_id"].map(name_map)
+    result["brand_name"] = result["coupon_id"].map(brand_map)
+
+    return result
 
 
 def get_status_history(coupon_ids: list[int]) -> pd.DataFrame:

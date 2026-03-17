@@ -18,10 +18,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Logo in sidebar
+# Logo in sidebar — centered
 logo_path = os.path.join(os.path.dirname(__file__), "logo.png")
 if os.path.exists(logo_path):
+    st.sidebar.markdown(
+        "<div style='text-align: center;'>",
+        unsafe_allow_html=True,
+    )
     st.sidebar.image(logo_path, width=150)
+    st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
 # Ensure SQLite tables exist on first run
 from bq_client import ensure_tables_exist, sync_status_log, _fetch_all_coupons_brands
@@ -52,20 +57,15 @@ render_notification_badge()
 # Navigation — buttons only
 st.sidebar.title("Coupon Manager")
 
-if st.sidebar.button("Browse Coupons", use_container_width=True,
-                     type="primary" if st.session_state["page"] == "Browse Coupons" else "secondary"):
-    st.session_state["page"] = "Browse Coupons"
-    st.rerun()
-
-if st.sidebar.button("Coupon Detail", use_container_width=True,
-                     type="primary" if st.session_state["page"] == "Coupon Detail" else "secondary"):
-    st.session_state["page"] = "Coupon Detail"
-    st.rerun()
-
-if st.sidebar.button("Export", use_container_width=True,
-                     type="primary" if st.session_state["page"] == "Export" else "secondary"):
-    st.session_state["page"] = "Export"
-    st.rerun()
+PAGES = ["Browse Coupons", "Coupon Detail", "Export", "History"]
+for page_name in PAGES:
+    if st.sidebar.button(
+        page_name,
+        use_container_width=True,
+        type="primary" if st.session_state["page"] == page_name else "secondary",
+    ):
+        st.session_state["page"] = page_name
+        st.rerun()
 
 st.sidebar.divider()
 st.sidebar.caption("UniversityBox — Coupon Annotation Tool")
@@ -80,4 +80,7 @@ elif page == "Coupon Detail":
     render()
 elif page == "Export":
     from pages.export import render
+    render()
+elif page == "History":
+    from pages.history import render
     render()

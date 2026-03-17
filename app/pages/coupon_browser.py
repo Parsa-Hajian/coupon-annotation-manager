@@ -1,4 +1,6 @@
-"""Page 1: Browse, search, and filter coupons. Select via buttons."""
+"""Page 1: Browse, search, and filter coupons. Click row to select."""
+
+from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -35,7 +37,7 @@ def render():
     with col1:
         time_filter = st.radio(
             "Time Period",
-            ["Past Month", "Past Week", "Today", "All"],
+            ["Past Month", "Past Week", "Today", "Custom", "All"],
             index=0,
         )
     with col2:
@@ -45,7 +47,22 @@ def render():
             placeholder="Type to search...",
         )
 
-    df = get_coupons(time_filter=time_filter, search=search)
+    # Custom date range
+    custom_start = None
+    custom_end = None
+    if time_filter == "Custom":
+        dc1, dc2 = st.columns(2)
+        with dc1:
+            custom_start = st.date_input("Start Date", value=date.today() - timedelta(days=30), key="browser_start")
+        with dc2:
+            custom_end = st.date_input("End Date", value=date.today(), key="browser_end")
+        if custom_start > custom_end:
+            st.error("Start date must be before end date.")
+            return
+
+    df = get_coupons(time_filter=time_filter, search=search,
+                     custom_start=str(custom_start) if custom_start else None,
+                     custom_end=str(custom_end) if custom_end else None)
 
     if df.empty:
         st.info("No coupons found for the selected filters.")
@@ -88,35 +105,40 @@ def render():
 
     start_idx = (page_num - 1) * ROWS_PER_PAGE
     end_idx = min(start_idx + ROWS_PER_PAGE, total)
-    page_df = display_df.iloc[start_idx:end_idx]
+    page_df = display_df.iloc[start_idx:end_idx].reset_index(drop=True)
 
-    st.dataframe(page_df, use_container_width=True, hide_index=True)
+    # Selectable dataframe — click a row to highlight it
+    event = st.dataframe(
+        page_df,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="coupon_table",
+    )
 
     if total > ROWS_PER_PAGE:
         st.caption(f"Showing {start_idx + 1}-{end_idx} of {total}")
 
-    # Coupon selection — one button per row
-    st.divider()
-    st.subheader("Select a coupon")
+    # Show selected row info + action buttons
+    selected_rows = event.selection.rows if event.selection else []
+    if selected_rows:
+        sel_idx = selected_rows[0]
+        sel_row = page_df.iloc[sel_idx]
+        cid = int(sel_row["ID"])
 
-    page_slice = df.iloc[start_idx:end_idx]
-    for idx, row in page_slice.iterrows():
-        cid = row["coupon_id"]
-        name = row["coupon_name"] or "Unnamed"
-        brand = row["brand_name"] or "No brand"
-        is_proc = row["is_processed"]
-        label = f"{'[DONE] ' if is_proc else ''}{cid} \u2014 {name} ({brand})"
+        st.success(f"Selected: **{sel_row['Coupon Name']}** (ID: {cid}, Brand: {sel_row['Brand']})")
 
-        col_btn, col_edit = st.columns([8, 2])
-        with col_btn:
-            if st.button(label, key=f"select_{cid}", use_container_width=True):
+        col_select, col_edit = st.columns(2)
+        with col_select:
+            if st.button("Open Coupon Detail", type="primary", use_container_width=True):
                 st.session_state["selected_coupon_id"] = cid
-                st.session_state["form_coupon_id"] = None  # force form reload
+                st.session_state["form_coupon_id"] = None
                 st.session_state["page"] = "Coupon Detail"
                 st.rerun()
         with col_edit:
-            if is_proc:
-                if st.button("Edit", key=f"edit_{cid}"):
+            if sel_row["Processed"] == "\u2705":
+                if st.button("Edit Annotation", use_container_width=True):
                     st.session_state["selected_coupon_id"] = cid
                     st.session_state["form_coupon_id"] = None
                     st.session_state["page"] = "Coupon Detail"
