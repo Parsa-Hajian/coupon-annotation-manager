@@ -18,18 +18,21 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Logo in sidebar — centered
+# Logo in sidebar — centered and small
 logo_path = os.path.join(os.path.dirname(__file__), "logo.png")
 if os.path.exists(logo_path):
+    import base64
+    with open(logo_path, "rb") as f:
+        logo_b64 = base64.b64encode(f.read()).decode()
     st.sidebar.markdown(
-        "<div style='text-align: center;'>",
+        f"<div style='text-align: center; padding: 10px 0 5px 0;'>"
+        f"<img src='data:image/png;base64,{logo_b64}' style='width: 100px;'>"
+        f"</div>",
         unsafe_allow_html=True,
     )
-    st.sidebar.image(logo_path, width=150)
-    st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
 # Ensure SQLite tables exist on first run
-from bq_client import ensure_tables_exist, sync_status_log, _fetch_all_coupons_brands
+from bq_client import ensure_tables_exist, sync_status_log, _fetch_all_coupons_brands, apply_scheduled_visibility
 
 if "tables_initialized" not in st.session_state:
     ensure_tables_exist()
@@ -44,6 +47,7 @@ if "data_preloaded" not in st.session_state:
 # Sync status log — only once per session
 if "status_synced" not in st.session_state:
     sync_status_log()
+    apply_scheduled_visibility()
     st.session_state["status_synced"] = True
 
 # Initialize page state

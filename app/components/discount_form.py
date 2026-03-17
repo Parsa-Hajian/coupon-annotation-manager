@@ -1,4 +1,4 @@
-"""Dynamic discount block form widget."""
+"""Dynamic discount block form widget (product-scoped keys)."""
 
 import streamlit as st
 from components.category_picker import render_category_picker
@@ -7,33 +7,34 @@ DISCOUNT_TYPES = ["Percentage", "Amount", "Payback/Cashback/Gift"]
 DISCOUNT_MODIFIERS = ["Fixed", "Up to", "Starting from", "Between", "Incremental"]
 
 
-def render_discount_block(index: int, defaults: dict | None = None) -> dict:
+def render_discount_block(product_idx: int, disc_idx: int, defaults: dict | None = None) -> dict:
     """Render a single discount block form.
 
     Args:
-        index: block index for unique widget keys
+        product_idx: product index for unique widget keys
+        disc_idx: discount block index within the product
         defaults: optional dict for pre-population
 
     Returns:
         dict with all discount block fields
     """
     defaults = defaults or {}
+    key = f"{product_idx}_{disc_idx}"
 
-    st.markdown(f"**Discount Block {index + 1}**")
+    st.markdown(f"**Discount {disc_idx + 1}**")
 
     col1, col2 = st.columns(2)
 
     with col1:
-        type_options = DISCOUNT_TYPES
         type_idx = 0
         if defaults.get("discount_type"):
             type_map = {"percentage": 0, "amount": 1, "payback_cashback_gift": 2}
             type_idx = type_map.get(defaults["discount_type"], 0)
         discount_type = st.selectbox(
             "Discount Type",
-            type_options,
+            DISCOUNT_TYPES,
             index=type_idx,
-            key=f"disc_type_{index}",
+            key=f"disc_type_{key}",
         )
 
     with col2:
@@ -45,7 +46,7 @@ def render_discount_block(index: int, defaults: dict | None = None) -> dict:
             "Modifier",
             DISCOUNT_MODIFIERS,
             index=mod_idx,
-            key=f"disc_mod_{index}",
+            key=f"disc_mod_{key}",
         )
 
     # Value inputs based on modifier
@@ -60,23 +61,22 @@ def render_discount_block(index: int, defaults: dict | None = None) -> dict:
                 "Min Value",
                 min_value=0.0,
                 value=float(defaults.get("discount_value_1", 0) or 0),
-                key=f"disc_v1_{index}",
+                key=f"disc_v1_{key}",
             )
         with v_col2:
             value_2 = st.number_input(
                 "Max Value",
                 min_value=0.0,
                 value=float(defaults.get("discount_value_2", 0) or 0),
-                key=f"disc_v2_{index}",
+                key=f"disc_v2_{key}",
             )
     elif modifier == "Incremental":
         values_str = st.text_input(
             "Values (comma-separated, e.g. 20,40,60)",
             value=defaults.get("discount_values_json", ""),
-            key=f"disc_vinc_{index}",
+            key=f"disc_vinc_{key}",
         )
         values_json = values_str
-        # Parse first value for value_1
         parts = [v.strip() for v in values_str.split(",") if v.strip()]
         if parts:
             try:
@@ -89,7 +89,7 @@ def render_discount_block(index: int, defaults: dict | None = None) -> dict:
             "Value",
             min_value=0.0,
             value=float(defaults.get("discount_value_1", 0) or 0),
-            key=f"disc_v1_{index}",
+            key=f"disc_v1_{key}",
         )
 
     # Gift product category (only for Payback/Cashback/Gift)
@@ -100,7 +100,7 @@ def render_discount_block(index: int, defaults: dict | None = None) -> dict:
         gift_is_product = st.checkbox(
             "Gift is a product?",
             value=bool(defaults.get("gift_is_product", False)),
-            key=f"disc_gift_{index}",
+            key=f"disc_gift_{key}",
         )
         if gift_is_product:
             st.markdown("*Gift product category:*")
@@ -109,7 +109,7 @@ def render_discount_block(index: int, defaults: dict | None = None) -> dict:
                 "sub": defaults.get("gift_sub_category", ""),
                 "micro": defaults.get("gift_micro_category", ""),
             }
-            gift_cat = render_category_picker(f"gift_{index}", gift_defaults)
+            gift_cat = render_category_picker(f"gift_{key}", gift_defaults)
 
     # Map display values to storage values
     type_store_map = {

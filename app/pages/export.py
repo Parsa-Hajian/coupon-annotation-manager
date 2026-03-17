@@ -5,13 +5,14 @@ import os
 
 import pandas as pd
 import streamlit as st
-from bq_client import get_all_export_data, get_status_history, delete_annotation
+from bq_client import get_all_export_data, get_status_history, get_visibility_log, delete_annotation
 
 EXCEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "coupon_annotations.xlsx")
 
 
-def _pivot_to_excel_format(df: pd.DataFrame, status_df: pd.DataFrame) -> pd.DataFrame:
-    """Pivot discount blocks and product categories into wide-format columns per coupon."""
+def _pivot_to_excel_format(df: pd.DataFrame, status_df: pd.DataFrame,
+                           vis_df: pd.DataFrame) -> pd.DataFrame:
+    """Pivot products (with their discounts) and visibility into wide-format columns per coupon."""
     if df.empty:
         return df
 
@@ -33,9 +34,10 @@ def _pivot_to_excel_format(df: pd.DataFrame, status_df: pd.DataFrame) -> pd.Data
             "Last Modified": first["last_modified"],
             "Processed By": first["processed_by"],
             "Processed At": first["processed_at"],
+            "Visibility": first.get("visibility", ""),
         }
 
-        # Add status history (deactivation/reactivation times)
+        # Status history (deactivation/reactivation times)
         if not status_df.empty:
             coupon_status = status_df[status_df["coupon_id"] == cid].sort_values("changed_at")
             deactivation_times = coupon_status[coupon_status["status"] == "Non attivo"]["changed_at"].tolist()
@@ -49,30 +51,51 @@ def _pivot_to_excel_format(df: pd.DataFrame, status_df: pd.DataFrame) -> pd.Data
             for j, dt in enumerate(reactivation_times):
                 row[f"Reactivation Time {j + 1}"] = dt
 
-        # Product categories — deduplicate
-        unique_cats = coupon_rows[["product_macro_category", "product_sub_category", "product_micro_category"]].drop_duplicates()
-        for j, (_, cat_row) in enumerate(unique_cats.iterrows()):
-            prefix = f"Product {j + 1}"
-            row[f"{prefix} Macro"] = cat_row["product_macro_category"]
-            row[f"{prefix} Sub"] = cat_row["product_sub_category"]
-            row[f"{prefix} Micro"] = cat_row["product_micro_category"]
+        # Visibility change log
+        if not vis_df.empty:
+            coupon_vis = vis_df[vis_df["coupon_id"] == cid].sort_values("changed_at")
+            for j, (_, vr) in enumerate(coupon_vis.iterrows()):
+                prefix = f"Visibility Change {j + 1}"
+                row[f"{prefix}"] = f"{vr['visibility_before']} -> {vr['visibility_after']}"
+                row[f"{prefix} At"] = vr["changed_at"]
+                row[f"{prefix} By"] = vr.get("changed_by", "")
 
-        # Discount blocks — deduplicate
-        disc_cols = ["discount_type", "discount_modifier", "discount_value_1", "discount_value_2",
-                     "discount_values_json", "gift_is_product", "gift_macro_category",
-                     "gift_sub_category", "gift_micro_category"]
-        unique_discs = coupon_rows[disc_cols].drop_duplicates()
-        for j, (_, disc_row) in enumerate(unique_discs.iterrows()):
-            prefix = f"Discount {j + 1}"
-            row[f"{prefix} Type"] = disc_row["discount_type"]
-            row[f"{prefix} Modifier"] = disc_row["discount_modifier"]
-            row[f"{prefix} Value 1"] = disc_row["discount_value_1"]
-            row[f"{prefix} Value 2"] = disc_row["discount_value_2"]
-            row[f"{prefix} Values (incremental)"] = disc_row["discount_values_json"]
-            if disc_row["gift_is_product"]:
-                row[f"{prefix} Gift Macro"] = disc_row["gift_macro_category"]
-                row[f"{prefix} Gift Sub"] = disc_row["gift_sub_category"]
-                row[f"{prefix} Gift Micro"] = disc_row["gift_micro_category"]
+        # Products with their discounts — deduplicate by product
+        unique_products = coupon_rows[["product_name", "product_macro_category",
+                                       "product_sub_category", "product_micro_category"]].drop_duplicates()
+
+        for p_idx, (_, prod_row) in enumerate(unique_products.iterrows()):
+            p_prefix = f"Product {p_idx + 1}"
+            row[f"{p_prefix} Name"] = prod_row["product_name"]
+            row[f"{p_prefix} Macro"] = prod_row["product_macro_category"]
+            row[f"{p_prefix} Sub"] = prod_row["product_sub_category"]
+            row[f"{p_prefix} Micro"] = prod_row["product_micro_category"]
+
+            # Get discounts for this specific product
+            prod_mask = (
+                (coupon_rows["product_name"] == prod_row["product_name"]) &
+                (coupon_rows["product_macro_category"] == prod_row["product_macro_category"]) &
+                (coupon_rows["product_sub_category"] == prod_row["product_sub_category"]) &
+                (coupon_rows["product_micro_category"] == prod_row["product_micro_category"])
+            )
+            prod_discs = coupon_rows[prod_mask]
+
+            disc_cols = ["discount_type", "discount_modifier", "discount_value_1", "discount_value_2",
+                         "discount_values_json", "gift_is_product", "gift_macro_category",
+                         "gift_sub_category", "gift_micro_category"]
+            unique_discs = prod_discs[disc_cols].drop_duplicates()
+
+            for d_idx, (_, disc_row) in enumerate(unique_discs.iterrows()):
+                d_prefix = f"{p_prefix} Discount {d_idx + 1}"
+                row[f"{d_prefix} Type"] = disc_row["discount_type"]
+                row[f"{d_prefix} Modifier"] = disc_row["discount_modifier"]
+                row[f"{d_prefix} Value 1"] = disc_row["discount_value_1"]
+                row[f"{d_prefix} Value 2"] = disc_row["discount_value_2"]
+                row[f"{d_prefix} Values (incremental)"] = disc_row["discount_values_json"]
+                if disc_row["gift_is_product"]:
+                    row[f"{d_prefix} Gift Macro"] = disc_row["gift_macro_category"]
+                    row[f"{d_prefix} Gift Sub"] = disc_row["gift_sub_category"]
+                    row[f"{d_prefix} Gift Micro"] = disc_row["gift_micro_category"]
 
         rows.append(row)
 
@@ -111,7 +134,8 @@ def render():
 
                 coupon_ids = df["coupon_id"].unique().tolist()
                 status_df = get_status_history(coupon_ids)
-                export_df = _pivot_to_excel_format(df, status_df)
+                vis_df = get_visibility_log(coupon_ids)
+                export_df = _pivot_to_excel_format(df, status_df, vis_df)
 
                 _write_excel(export_df)
                 st.session_state["export_df"] = export_df

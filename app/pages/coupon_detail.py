@@ -1,10 +1,15 @@
-"""Page 2: Coupon detail view, annotation form, edit and delete."""
+"""Page 2: Coupon detail view — product-by-product annotation form with visibility."""
 
 import streamlit as st
-from bq_client import get_coupon_detail, get_existing_annotation, save_annotation, delete_annotation
+from bq_client import (
+    get_coupon_detail, get_existing_annotation, save_annotation,
+    delete_annotation, save_visibility_schedule, delete_visibility_schedule,
+)
 from components.category_picker import render_category_picker
 from components.discount_form import render_discount_block
 from categories import MACRO_CATEGORIES
+
+VISIBILITY_OPTIONS = ["", "High", "Medium", "Low"]
 
 
 def _init_form_state(coupon_id: int):
@@ -16,12 +21,17 @@ def _init_form_state(coupon_id: int):
 
     existing = get_existing_annotation(coupon_id)
     if existing:
-        st.session_state["product_categories"] = existing["categories"]
-        st.session_state["discount_blocks"] = existing["discounts"]
+        st.session_state["products"] = existing["products"]
+        st.session_state["visibility"] = existing.get("visibility", "")
+        st.session_state["visibility_schedules"] = existing.get("visibility_schedules", [])
         st.session_state["form_loaded_from_db"] = True
     else:
-        st.session_state["product_categories"] = [{}]
-        st.session_state["discount_blocks"] = [{}]
+        st.session_state["products"] = [
+            {"product_name": "", "product_macro_category": "", "product_sub_category": "",
+             "product_micro_category": "", "discounts": [{}]}
+        ]
+        st.session_state["visibility"] = ""
+        st.session_state["visibility_schedules"] = []
         st.session_state["form_loaded_from_db"] = False
 
 
@@ -99,56 +109,139 @@ def render():
 
     st.divider()
 
-    # --- Product Categories ---
-    st.subheader("Product Categories")
+    # --- Visibility ---
+    st.subheader("Visibility")
+    vis_col1, vis_col2 = st.columns(2)
 
-    categories_data = st.session_state["product_categories"]
-    updated_categories = []
+    with vis_col1:
+        current_vis = st.session_state.get("visibility", "")
+        vis_idx = VISIBILITY_OPTIONS.index(current_vis) if current_vis in VISIBILITY_OPTIONS else 0
+        visibility = st.selectbox(
+            "Position on website",
+            VISIBILITY_OPTIONS,
+            index=vis_idx,
+            key="visibility_select",
+            format_func=lambda x: x if x else "— Select —",
+        )
 
-    for i, cat in enumerate(categories_data):
-        with st.container():
-            cols = st.columns([10, 1])
-            with cols[0]:
-                defaults = {
-                    "macro": cat.get("product_macro_category", ""),
-                    "sub": cat.get("product_sub_category", ""),
-                    "micro": cat.get("product_micro_category", ""),
-                }
-                result = render_category_picker(f"product_{i}", defaults)
-                updated_categories.append(result)
-            with cols[1]:
-                if len(categories_data) > 1:
-                    if st.button("X", key=f"remove_cat_{i}", help="Remove this product category"):
-                        categories_data.pop(i)
-                        st.session_state["product_categories"] = categories_data
-                        st.rerun()
+    with vis_col2:
+        show_schedule = st.checkbox("Schedule automated change", key="show_vis_schedule")
 
-    if st.button("+ Add Product Category"):
-        st.session_state["product_categories"].append({})
-        st.rerun()
+    if show_schedule:
+        st.markdown("**Schedule a visibility change**")
+        sc1, sc2, sc3 = st.columns(3)
+        with sc1:
+            sched_to = st.selectbox(
+                "Change to",
+                ["High", "Medium", "Low"],
+                key="sched_vis_to",
+            )
+        with sc2:
+            sched_date = st.date_input("On date", key="sched_vis_date")
+        with sc3:
+            sched_time = st.time_input("At time", key="sched_vis_time")
+
+        if st.button("Add Schedule", key="add_vis_schedule"):
+            from datetime import datetime as dt
+            scheduled_at = dt.combine(sched_date, sched_time).isoformat()
+            save_visibility_schedule(
+                coupon_id, visibility or "", sched_to,
+                scheduled_at, operator.strip(),
+            )
+            st.success(f"Scheduled: change to {sched_to} on {sched_date} at {sched_time}")
+            # Refresh schedules
+            existing = get_existing_annotation(coupon_id)
+            if existing:
+                st.session_state["visibility_schedules"] = existing.get("visibility_schedules", [])
+            st.rerun()
+
+    # Show existing schedules
+    schedules = st.session_state.get("visibility_schedules", [])
+    if schedules:
+        st.markdown("**Pending schedules:**")
+        for s in schedules:
+            sc_col1, sc_col2 = st.columns([4, 1])
+            with sc_col1:
+                st.text(f"{s.get('visibility_from', '?')} -> {s['visibility_to']} at {s['scheduled_at']}")
+            with sc_col2:
+                if st.button("Cancel", key=f"cancel_sched_{s['id']}"):
+                    delete_visibility_schedule(s["id"])
+                    st.rerun()
 
     st.divider()
 
-    # --- Discount Blocks ---
-    st.subheader("Discount Blocks")
+    # --- Products (each with their own discount blocks) ---
+    st.subheader("Products & Discounts")
+    st.caption("Add each product with its category and discount blocks.")
 
-    discounts_data = st.session_state["discount_blocks"]
-    updated_discounts = []
+    products_data = st.session_state["products"]
+    updated_products = []
 
-    for i, disc in enumerate(discounts_data):
-        with st.container():
-            with st.expander(f"Discount Block {i + 1}", expanded=True):
-                result = render_discount_block(i, disc)
-                updated_discounts.append(result)
+    for p_idx, product in enumerate(products_data):
+        with st.expander(f"Product {p_idx + 1}: {product.get('product_name') or '(unnamed)'}", expanded=True):
+            # Product name
+            prod_name = st.text_input(
+                "Product Name",
+                value=product.get("product_name", ""),
+                key=f"prod_name_{p_idx}",
+            )
 
-                if len(discounts_data) > 1:
-                    if st.button(f"Remove Block {i + 1}", key=f"remove_disc_{i}"):
-                        discounts_data.pop(i)
-                        st.session_state["discount_blocks"] = discounts_data
-                        st.rerun()
+            # Product category
+            cat_defaults = {
+                "macro": product.get("product_macro_category", ""),
+                "sub": product.get("product_sub_category", ""),
+                "micro": product.get("product_micro_category", ""),
+            }
+            cat_result = render_category_picker(f"product_{p_idx}", cat_defaults)
 
-    if st.button("+ Add Discount Block"):
-        st.session_state["discount_blocks"].append({})
+            # Discount blocks for this product
+            st.markdown("---")
+            st.markdown("**Discount Blocks**")
+            product_discounts = product.get("discounts", [{}])
+            updated_discs = []
+
+            for d_idx, disc in enumerate(product_discounts):
+                with st.container():
+                    result = render_discount_block(p_idx, d_idx, disc)
+                    updated_discs.append(result)
+
+                    if len(product_discounts) > 1:
+                        if st.button(f"Remove Discount {d_idx + 1}",
+                                     key=f"remove_disc_{p_idx}_{d_idx}"):
+                            product_discounts.pop(d_idx)
+                            product["discounts"] = product_discounts
+                            st.session_state["products"] = products_data
+                            st.rerun()
+
+            if st.button("+ Add Discount Block", key=f"add_disc_{p_idx}"):
+                product_discounts.append({})
+                product["discounts"] = product_discounts
+                st.session_state["products"] = products_data
+                st.rerun()
+
+            updated_products.append({
+                "name": prod_name,
+                "macro": cat_result["macro"],
+                "sub": cat_result["sub"],
+                "micro": cat_result["micro"],
+                "discounts": updated_discs,
+            })
+
+            # Remove product button
+            if len(products_data) > 1:
+                if st.button(f"Remove Product {p_idx + 1}", key=f"remove_prod_{p_idx}",
+                             type="secondary"):
+                    products_data.pop(p_idx)
+                    st.session_state["products"] = products_data
+                    st.rerun()
+
+    if st.button("+ Add Product", type="secondary"):
+        products_data.append({
+            "product_name": "", "product_macro_category": "",
+            "product_sub_category": "", "product_micro_category": "",
+            "discounts": [{}],
+        })
+        st.session_state["products"] = products_data
         st.rerun()
 
     st.divider()
@@ -161,11 +254,8 @@ def render():
             if not operator.strip():
                 st.error("Please enter your operator name.")
                 return
-            if not updated_categories:
-                st.error("Please add at least one product category.")
-                return
-            if not updated_discounts:
-                st.error("Please add at least one discount block.")
+            if not updated_products:
+                st.error("Please add at least one product.")
                 return
 
             override_cat = st.session_state.get("override_brand_category", "")
@@ -174,9 +264,9 @@ def render():
                 save_annotation(
                     coupon_id=coupon_id,
                     operator=operator.strip(),
-                    categories=updated_categories,
-                    discounts=updated_discounts,
+                    products=updated_products,
                     brand_category_override=override_cat if not detail.get("industry") else "",
+                    visibility=visibility,
                 )
 
             st.session_state["form_loaded_from_db"] = True
